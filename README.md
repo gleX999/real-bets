@@ -4,17 +4,32 @@
 
 `real-bets` downloads real price data for your tickers, measures how they move together, and tells you the **effective number of independent bets** in your portfolio — plus a correlation map you can share.
 
+Example: the 20 most popular stocks with retail investors, 1 year of daily prices (September 2026):
+
+```
+python real_bets.py NVDA AAPL MSFT AMZN GOOGL META TSLA AVGO AMD NFLX JPM V MA COST WMT LLY UNH XOM BRK-B PLTR
+```
+
 ```
 ----------------------------------------------
- REAL BETS  |  20 tickers, 251 days (1y)
+ REAL BETS  |  20 tickers, 250 days (1y)
 ----------------------------------------------
- average correlation                0.40
- effective number of bets            4.4
- ceiling at this correlation         6.1
+ average correlation                0.10
+ effective number of bets           11.0
+ ceiling at this correlation       104.9
  in a crash (rho = 0.7)              1.9
 ----------------------------------------------
- you own 20 tickers. you hold 4.4 bets.
+ most correlated pairs:
+   MA     V      0.86
+   COST   WMT    0.59
+   AVGO   NVDA   0.54
+   AMZN   GOOGL  0.54
+   AMD    AVGO   0.47
+----------------------------------------------
+ you own 20 tickers. you hold 11.0 bets.
 ```
+
+Correlations are near record lows right now, so the same 20 stocks hold 11 bets today. If correlation jumps to 0.7, as it tends to in a selloff, they collapse to 1.9.
 
 The math is explained in the article: **[You Own 20 Stocks. You Have 3 Bets.](https://x.com/glex999/status/2103977489831706882)**
 
