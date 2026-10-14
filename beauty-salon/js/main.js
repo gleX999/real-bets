@@ -1,17 +1,26 @@
-/* AURUM: скрипты лендинга */
+/* Queen Studio: скрипты лендинга */
 (() => {
   'use strict';
 
   /* ===== Настройки: заполнить, когда появятся данные салона ===== */
   const SALON = {
-    yclients: {
-      // Адрес скрипта из кода виджета YCLIENTS, например 'https://w123456.yclients.com/widgetJS'
-      widgetSrc: '',
-      // Запасной вариант: ссылка на страницу онлайн-записи, например 'https://n123456.yclients.com'
-      bookingUrl: '',
+    booking: {
+      // Ссылка на страницу онлайн-записи. Рекомендую Reservio: 'https://queen-studio.reservio.com'
+      // Пока пусто, кнопки «Записаться» открывают окно с телефоном.
+      url: '',
     },
-    // Координаты салона для Яндекс Карты (широта и долгота из карточки организации)
-    map: { lat: null, lon: null, zoom: 16 },
+    map: {
+      // Адрес для Google Maps. Карта грузится только по кнопке, чтобы не ставить cookies без согласия (GDPR).
+      query: 'Husova 557, 274 01 Slaný',
+    },
+  };
+
+  const I18N = window.QS_I18N || {};
+  const LANGS = ['cs', 'en', 'uk'];
+  const LANG_META = {
+    cs: { flag: 'flag-cz', code: 'CZ', name: 'Čeština', locale: 'cs-CZ' },
+    en: { flag: 'flag-gb', code: 'EN', name: 'English', locale: 'en-GB' },
+    uk: { flag: 'flag-ua', code: 'UA', name: 'Українська', locale: 'uk-UA' },
   };
 
   const root = document.documentElement;
@@ -19,6 +28,8 @@
   // На настоящем сайте страница открыта не во фрейме; в превью-фрейме внешние виджеты недоступны
   const isTopLevel = (() => { try { return window.top === window.self; } catch (e) { return false; } })();
 
+  const $ = (sel, ctx = document) => ctx.querySelector(sel);
+  const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
   const token = (name, fallback) => getComputedStyle(root).getPropertyValue(name).trim() || fallback;
   const hexToRgb = (hex) => {
     const h = hex.replace('#', '');
@@ -32,22 +43,105 @@
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
   const store = {
-    get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
-    set(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* хранилище недоступно */ } },
+    get(key, session) { try { return (session ? sessionStorage : localStorage).getItem(key); } catch (e) { return null; } },
+    set(key, value, session) { try { (session ? sessionStorage : localStorage).setItem(key, value); } catch (e) { /* хранилище недоступно */ } },
   };
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const seg = (t, a, b) => clamp01((t - a) / (b - a));
+  const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+  const easeInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+  const easeBack = (p) => { const c1 = 1.5; const c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+
+  /* ===== Языки ===== */
+  let lang = 'cs';
+  const t = (key) => (I18N[lang] && I18N[lang][key]) ?? (I18N.cs && I18N.cs[key]) ?? '';
+
+  function detectLang() {
+    const saved = store.get('qs-lang');
+    if (LANGS.includes(saved)) return saved;
+    const prefs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ''];
+    for (const raw of prefs) {
+      const l = String(raw).toLowerCase();
+      if (l.startsWith('cs') || l.startsWith('sk')) return 'cs';
+      if (l.startsWith('uk') || l.startsWith('ru')) return 'uk';
+      if (l.startsWith('en')) return 'en';
+    }
+    return 'en';
+  }
+
+  function priceHTML(value, from) {
+    const num = new Intl.NumberFormat(LANG_META[lang].locale).format(value).replace(/\s/g, ' ');
+    const amount = lang === 'en' ? `CZK ${num}` : `${num} Kč`;
+    return from ? `<small>${t('from')}</small> ${amount}` : amount;
+  }
+
+  function applyLang(next, save) {
+    lang = LANGS.includes(next) ? next : 'cs';
+    const dict = I18N[lang] || {};
+    root.lang = lang;
+    $$('[data-i18n]').forEach((el) => { const v = dict[el.dataset.i18n]; if (v != null) el.textContent = v; });
+    $$('[data-i18n-attr]').forEach((el) => {
+      el.dataset.i18nAttr.split(',').forEach((pair) => {
+        const [attr, key] = pair.split(':').map((s) => s.trim());
+        if (dict[key] != null) el.setAttribute(attr, dict[key]);
+      });
+    });
+    $$('[data-price]').forEach((el) => { el.innerHTML = priceHTML(Number(el.dataset.price), el.hasAttribute('data-from')); });
+    $$('[data-min]').forEach((el) => { el.textContent = `${el.dataset.min} ${t('price.min')}`; });
+    document.title = t('meta.title');
+    $('meta[name="description"]')?.setAttribute('content', t('meta.desc'));
+    if (save) store.set('qs-lang', lang);
+    document.dispatchEvent(new CustomEvent('qs:lang'));
+  }
+
+  function initLang() {
+    const wrap = $('#lang');
+    if (!wrap) return;
+    const btn = $('.lang__btn', wrap);
+    const menu = $('#lang-menu');
+    const opts = $$('.lang__opt', wrap);
+    const setOpen = (open) => {
+      btn.setAttribute('aria-expanded', String(open));
+      menu.hidden = !open;
+      if (open) (opts.find((o) => o.dataset.lang === lang) || opts[0]).focus();
+    };
+    const sync = () => {
+      const meta = LANG_META[lang];
+      $('.lang__flag use', btn).setAttribute('href', `#${meta.flag}`);
+      $('.lang__code', btn).textContent = meta.code;
+      btn.setAttribute('aria-label', `${t('lang.label')}: ${meta.name}`);
+      opts.forEach((o) => o.setAttribute('aria-current', String(o.dataset.lang === lang)));
+    };
+    btn.addEventListener('click', () => setOpen(menu.hidden));
+    menu.addEventListener('click', (e) => {
+      const opt = e.target.closest('[data-lang]');
+      if (!opt) return;
+      applyLang(opt.dataset.lang, true);
+      setOpen(false);
+      btn.focus();
+    });
+    menu.addEventListener('keydown', (e) => {
+      const i = opts.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        opts[(i + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length].focus();
+      }
+    });
+    document.addEventListener('click', (e) => { if (!wrap.contains(e.target) && !menu.hidden) setOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) { setOpen(false); btn.focus(); } });
+    document.addEventListener('qs:lang', sync);
+    sync();
+  }
 
   /* ===== Шапка: высота, фон при прокрутке, мобильное меню, плашка черновика ===== */
   function initHeader() {
-    const header = document.querySelector('.site-header');
+    const header = $('.site-header');
     if (!header) return;
 
-    const bar = document.getElementById('draft-bar');
+    const bar = $('#draft-bar');
     if (bar) {
-      if (store.get('aurum-draft-hidden') === '1') bar.hidden = true;
-      bar.querySelector('button')?.addEventListener('click', () => {
-        bar.hidden = true;
-        store.set('aurum-draft-hidden', '1');
-      });
+      if (store.get('qs-draft-hidden') === '1') bar.hidden = true;
+      $('button', bar)?.addEventListener('click', () => { bar.hidden = true; store.set('qs-draft-hidden', '1'); });
     }
 
     const setHeight = () => root.style.setProperty('--header-h', `${header.offsetHeight}px`);
@@ -58,70 +152,338 @@
     const onScroll = () => {
       if (ticking) return;
       ticking = true;
-      requestAnimationFrame(() => {
-        header.classList.toggle('is-scrolled', window.scrollY > 24);
-        ticking = false;
-      });
+      requestAnimationFrame(() => { header.classList.toggle('is-scrolled', window.scrollY > 24); ticking = false; });
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
 
-    const burger = header.querySelector('.burger');
-    const nav = document.getElementById('nav');
+    const burger = $('.burger', header);
+    const nav = $('#nav');
     if (!burger || !nav) return;
+    const isOpen = () => burger.getAttribute('aria-expanded') === 'true';
+    const label = () => burger.setAttribute('aria-label', t(isOpen() ? 'menu.close' : 'menu.open'));
     const setOpen = (open) => {
       burger.setAttribute('aria-expanded', String(open));
-      burger.setAttribute('aria-label', open ? 'Закрыть меню' : 'Открыть меню');
       nav.classList.toggle('is-open', open);
       header.classList.toggle('menu-open', open);
+      label();
     };
-    burger.addEventListener('click', () => setOpen(burger.getAttribute('aria-expanded') !== 'true'));
+    burger.addEventListener('click', () => setOpen(!isOpen()));
     nav.addEventListener('click', (e) => { if (e.target.closest('a')) setOpen(false); });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && nav.classList.contains('is-open')) { setOpen(false); burger.focus(); }
-    });
-    window.matchMedia('(min-width: 981px)').addEventListener('change', (e) => { if (e.matches) setOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isOpen()) { setOpen(false); burger.focus(); } });
+    window.matchMedia('(min-width: 1081px)').addEventListener('change', (e) => { if (e.matches) setOpen(false); });
+    document.addEventListener('qs:lang', label);
   }
 
-  /* ===== Запись: виджет YCLIENTS или запасное окно ===== */
-  function initBooking() {
-    const buttons = document.querySelectorAll('.js-book');
-    const { widgetSrc, bookingUrl } = SALON.yclients;
+  /* ===== Заставка: логотип собирается по частям и улетает в шапку ===== */
+  function initIntro(onDone) {
+    const intro = $('#intro');
+    if (!intro || intro.hidden) { root.classList.remove('is-intro'); onDone(); return; }
+    intro.classList.add('is-running');
+    root.classList.add('intro-lock');
 
-    if (widgetSrc && isTopLevel) {
-      // Виджет YCLIENTS сам открывается по клику на элементы с классом ms_booking
-      buttons.forEach((b) => b.classList.add('ms_booking'));
-      const script = document.createElement('script');
-      script.src = widgetSrc;
-      script.charset = 'UTF-8';
-      script.async = true;
-      document.body.appendChild(script);
-      return;
+    const q = (sel) => $(sel, intro);
+    const logo = q('.intro__logo');
+    const track = q('.intro-track');
+    const spark = q('.intro-spark');
+    const crown = q('.intro-crown');
+    const star = q('.intro-star');
+    const wipeQueen = q('.intro-wipe-queen');
+    const studio = q('.intro-studio');
+    const wipeScript = q('.intro-wipe-script');
+    const glint = q('.intro-glint');
+    const glintGrad = $('#qs-glint');
+    const place = q('.intro__place');
+    const ring = q('.intro-ring');
+    const script = q('.intro-script');
+    const trackLen = track.getTotalLength();
+    const BUILD_END = 3050;
+
+    // t — миллисекунды от начала. Кольцо → Queen → корона с искрой → STUDIO → beauty salon → блик
+    function render(time) {
+      const r = easeInOut(seg(time, 250, 1500));
+      track.setAttribute('stroke-dashoffset', (1 - r).toFixed(4));
+      const pt = track.getPointAtLength(trackLen * r);
+      spark.setAttribute('cx', pt.x.toFixed(1));
+      spark.setAttribute('cy', pt.y.toFixed(1));
+      spark.setAttribute('opacity', (seg(time, 250, 420) * (1 - seg(time, 1420, 1650))).toFixed(3));
+
+      wipeQueen.setAttribute('width', (easeOut(seg(time, 650, 1600)) * 900).toFixed(1));
+
+      const c = seg(time, 1250, 1850);
+      crown.setAttribute('opacity', easeOut(c).toFixed(3));
+      crown.setAttribute('transform', `translate(0 ${(-34 * (1 - easeBack(c))).toFixed(2)}) rotate(${(-7 * (1 - easeOut(c))).toFixed(2)} 292 216)`);
+
+      const s = seg(time, 1750, 2200);
+      const pulse = s < 0.5 ? s * 2 : 2 - s * 2;
+      star.setAttribute('opacity', pulse.toFixed(3));
+      star.setAttribute('transform', `translate(292 172) rotate(${(s * 90).toFixed(1)}) scale(${(0.4 + pulse).toFixed(3)}) translate(-292 -172)`);
+
+      const st = easeOut(seg(time, 1500, 2150));
+      studio.setAttribute('opacity', st.toFixed(3));
+      studio.setAttribute('letter-spacing', (16 + 28 * (1 - st)).toFixed(2));
+
+      wipeScript.setAttribute('width', (easeInOut(seg(time, 1850, 2700)) * 1000).toFixed(1));
+
+      const g = seg(time, 2350, 3000);
+      glint.setAttribute('opacity', g > 0 && g < 1 ? '1' : '0');
+      glintGrad.setAttribute('gradientTransform', `translate(${(-260 + g * 1300).toFixed(1)} 0) skewX(-22)`);
+
+      place.style.opacity = easeOut(seg(time, 2400, 2950)).toFixed(3);
     }
 
-    const dialog = document.getElementById('booking');
-    const target = dialog?.querySelector('[data-booking-target]');
-    buttons.forEach((b) => b.addEventListener('click', (e) => {
+    let raf = 0;
+    let start = 0;
+    let leaving = false;
+
+    function finish() {
+      root.classList.remove('is-intro', 'intro-lock');
+      store.set('qs-intro', '1', true);
+      intro.remove();
+      onDone();
+    }
+
+    // Логотип уменьшается и встаёт ровно на место логотипа в шапке; кольцо и подпись растворяются
+    function leave(fast) {
+      if (leaving) return;
+      leaving = true;
+      cancelAnimationFrame(raf);
+      render(BUILD_END);
+      const target = $('.site-header .logo__svg');
+      const bg = q('.intro__bg');
+      const dur = fast ? 500 : 950;
+      const easing = 'cubic-bezier(.65, 0, .25, 1)';
+      if (!target || !logo.animate) { finish(); return; }
+      const a = logo.getBoundingClientRect();
+      const h = target.getBoundingClientRect();
+      const kH = h.width / 626;
+      const kI = a.width / 880;
+      const tx = h.left - a.left - (214 - 10) * kH;
+      const ty = h.top - a.top - (166 - 130) * kH;
+      logo.style.transformOrigin = '0 0';
+      const move = logo.animate(
+        [{ transform: 'none' }, { transform: `translate(${tx}px, ${ty}px) scale(${kH / kI})` }],
+        { duration: dur, easing, fill: 'forwards' },
+      );
+      const fade = { duration: dur * 0.55, easing: 'ease-out', fill: 'forwards' };
+      [ring, script, place, q('.intro__skip')].forEach((el) => el && el.animate([{ opacity: 1 }, { opacity: 0 }], fade));
+      bg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur, easing: 'ease-in-out', fill: 'forwards' });
+      move.onfinish = () => {
+        root.classList.remove('is-intro');
+        logo.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, fill: 'forwards' }).onfinish = finish;
+      };
+    }
+
+    const tick = (now) => {
+      if (!start) start = now;
+      const time = now - start;
+      render(time);
+      if (time >= BUILD_END + 350) { leave(false); return; }
+      raf = requestAnimationFrame(tick);
+    };
+
+    const skip = () => leave(true);
+    q('.intro__skip').addEventListener('click', skip);
+    intro.addEventListener('click', skip);
+    window.addEventListener('wheel', skip, { once: true, passive: true });
+    window.addEventListener('touchmove', skip, { once: true, passive: true });
+    window.addEventListener('keydown', (e) => { if (!leaving && ['Escape', 'Enter', ' ', 'ArrowDown', 'PageDown'].includes(e.key)) skip(); });
+
+    render(0);
+    // Ждём шрифты логотипа, но не дольше 1,2 секунды
+    const fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    Promise.race([fontsReady, new Promise((r) => setTimeout(r, 1200))]).then(() => {
+      if (!leaving) raf = requestAnimationFrame(tick);
+    });
+  }
+
+  /* ===== Первый экран: кольцо прорисовывается, параллакс за курсором ===== */
+  function initHeroRing() {
+    const track = $('.hero-track');
+    const hero = $('#hero');
+    if (!track || !hero) return;
+    if (!reduceMotion.matches && track.animate) {
+      track.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 2200, easing: 'cubic-bezier(.65, 0, .35, 1)', fill: 'backwards' });
+    }
+    const ptr = { x: 0, y: 0, tx: 0, ty: 0 };
+    let raf = 0;
+    const step = () => {
+      ptr.x += (ptr.tx - ptr.x) * 0.06;
+      ptr.y += (ptr.ty - ptr.y) * 0.06;
+      hero.style.setProperty('--px', ptr.x.toFixed(3));
+      hero.style.setProperty('--py', ptr.y.toFixed(3));
+      raf = Math.abs(ptr.tx - ptr.x) + Math.abs(ptr.ty - ptr.y) > 0.002 ? requestAnimationFrame(step) : 0;
+    };
+    hero.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'mouse' || reduceMotion.matches) return;
+      const r = hero.getBoundingClientRect();
+      ptr.tx = ((e.clientX - r.left) / r.width) * 2 - 1;
+      ptr.ty = ((e.clientY - r.top) / r.height) * 2 - 1;
+      if (!raf) raf = requestAnimationFrame(step);
+    });
+    hero.addEventListener('pointerleave', () => { ptr.tx = 0; ptr.ty = 0; if (!raf) raf = requestAnimationFrame(step); });
+
+    // Если в первый экран добавлено видео, кнопка в круглом значке ставит его на паузу
+    const video = $('.hero__video', hero);
+    const core = $('.hero__badge-core', hero);
+    if (video && core) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hero__play';
+      core.replaceChildren(btn);
+      hero.querySelector('.hero__badge').removeAttribute('aria-hidden');
+      const sync = () => {
+        btn.setAttribute('aria-label', t(video.paused ? 'hero.play' : 'hero.pause'));
+        btn.textContent = video.paused ? '▶' : '❚❚';
+      };
+      btn.addEventListener('click', () => { if (video.paused) video.play(); else video.pause(); });
+      video.addEventListener('play', sync);
+      video.addEventListener('pause', sync);
+      document.addEventListener('qs:lang', sync);
+      if (reduceMotion.matches) video.pause();
+      sync();
+    }
+  }
+
+  /* ===== Тёплые огни боке на фоне первого экрана ===== */
+  function initBokeh() {
+    const canvas = $('#bokeh');
+    const box = canvas?.parentElement;
+    if (!canvas || !box || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const TAU = Math.PI * 2;
+    const colors = [hexToRgb(token('--gold', '#cfa862')), hexToRgb(token('--gold-soft', '#ecd59a')), hexToRgb(token('--nude', '#c9958a'))];
+    let W = 0;
+    let H = 0;
+    let motes = [];
+    let raf = 0;
+    let last = 0;
+    let time = 4;
+    let inView = true;
+
+    function layout() {
+      W = box.clientWidth;
+      H = box.clientHeight;
+      if (!W || !H) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const rnd = mulberry32(557);
+      const count = W > 700 ? 34 : 20;
+      motes = Array.from({ length: count }, () => {
+        const big = rnd() < 0.45;
+        return {
+          x: rnd() * W, y: rnd() * H, z: 0.3 + rnd() * 0.7,
+          r: big ? 14 + rnd() * 34 : 1 + rnd() * 2.2,
+          big, v: 4 + rnd() * 9, ph: rnd() * TAU, tw: 0.4 + rnd() * 1.1,
+          c: colors[rnd() < 0.55 ? 1 : rnd() < 0.7 ? 0 : 2],
+        };
+      });
+      draw(0);
+    }
+
+    function draw(dt) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'lighter';
+      for (const m of motes) {
+        if (dt) {
+          m.y -= m.v * m.z * dt;
+          m.x += Math.sin(time * 0.3 + m.ph) * 0.1 * m.z;
+          if (m.y < -60) { m.y = H + 60; m.x = Math.random() * W; }
+        }
+        const tw = 0.5 + 0.5 * Math.sin(time * m.tw + m.ph);
+        if (m.big) {
+          const g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
+          g.addColorStop(0, `rgba(${m.c},${(0.05 + 0.07 * tw * m.z).toFixed(3)})`);
+          g.addColorStop(0.7, `rgba(${m.c},${(0.02 + 0.03 * tw * m.z).toFixed(3)})`);
+          g.addColorStop(1, `rgba(${m.c},0)`);
+          ctx.fillStyle = g;
+        } else {
+          ctx.fillStyle = `rgba(${m.c},${(0.2 + 0.55 * tw * m.z).toFixed(3)})`;
+        }
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.r, 0, TAU);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    function frame(now) {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      time += dt;
+      draw(dt);
+    }
+    function sync() {
+      const run = !reduceMotion.matches && inView && !document.hidden;
+      if (run && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); }
+      else if (!run && raf) { cancelAnimationFrame(raf); raf = 0; }
+    }
+
+    layout();
+    if ('ResizeObserver' in window) {
+      let timer = 0;
+      new ResizeObserver(() => { clearTimeout(timer); timer = setTimeout(layout, 150); }).observe(box);
+    }
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }).observe(box);
+    }
+    document.addEventListener('visibilitychange', sync);
+    reduceMotion.addEventListener('change', () => { sync(); draw(0); });
+    sync();
+  }
+
+  /* ===== Маникюр: когда появится видео (video[data-scrub]), кадр раскрывается вместе с прокруткой ===== */
+  function initManiScrub() {
+    const section = $('#manicure');
+    const video = section && $('video[data-scrub]', section);
+    if (!video || reduceMotion.matches) return;
+    section.classList.add('is-scrub');
+    video.pause();
+    let ticking = false;
+    const update = () => {
+      ticking = false;
+      if (!video.duration) return;
+      const r = section.getBoundingClientRect();
+      const p = clamp01(-r.top / (r.height - window.innerHeight));
+      video.currentTime = p * (video.duration - 0.05);
+    };
+    window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+    video.addEventListener('loadedmetadata', update);
+  }
+
+  /* ===== Запись ===== */
+  function initBooking() {
+    const dialog = $('#booking');
+    const target = dialog && $('[data-booking-target]', dialog);
+    let key = 'booking.any';
+    document.addEventListener('click', (e) => {
+      const b = e.target.closest('.js-book');
+      if (!b) return;
       e.preventDefault();
-      if (bookingUrl) { window.open(bookingUrl, '_blank', 'noopener'); return; }
+      if (SALON.booking.url && isTopLevel) { window.open(SALON.booking.url, '_blank', 'noopener'); return; }
       if (!dialog || typeof dialog.showModal !== 'function') return;
-      if (target) target.textContent = b.dataset.book || 'Любая услуга';
+      key = b.dataset.bookKey || 'booking.any';
+      if (target) target.textContent = t(key);
       dialog.showModal();
-    }));
+    });
+    document.addEventListener('qs:lang', () => { if (dialog?.open && target) target.textContent = t(key); });
     // Клик по затемнению вокруг окна закрывает его
     dialog?.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
   }
 
   /* ===== Вкладки прайса ===== */
   function initTabs() {
-    const tabs = [...document.querySelectorAll('.tabs [role="tab"]')];
+    const tabs = $$('.tabs [role="tab"]');
     if (!tabs.length) return;
     const select = (tab, focus) => {
-      tabs.forEach((t) => {
-        const on = t === tab;
-        t.setAttribute('aria-selected', String(on));
-        t.tabIndex = on ? 0 : -1;
-        const panel = document.getElementById(t.getAttribute('aria-controls'));
+      tabs.forEach((x) => {
+        const on = x === tab;
+        x.setAttribute('aria-selected', String(on));
+        x.tabIndex = on ? 0 : -1;
+        const panel = document.getElementById(x.getAttribute('aria-controls'));
         if (panel) panel.hidden = !on;
       });
       if (focus) tab.focus();
@@ -135,8 +497,8 @@
         if (e.key === 'End') { e.preventDefault(); select(tabs[tabs.length - 1], true); }
       });
     });
-    // Ссылки «Цены» в карточках услуг открывают нужную вкладку
-    document.querySelectorAll('[data-open-tab]').forEach((link) => {
+    // Карточки услуг открывают нужную вкладку прайса
+    $$('[data-open-tab]').forEach((link) => {
       link.addEventListener('click', () => {
         const tab = document.getElementById(link.dataset.openTab);
         if (tab) select(tab);
@@ -146,24 +508,23 @@
 
   /* ===== Фильтр работ ===== */
   function initGallery() {
-    const chips = document.querySelectorAll('.chip[data-filter]');
-    const tiles = document.querySelectorAll('.tile[data-cat]');
+    const chips = $$('.chip[data-filter]');
+    const tiles = $$('.tile[data-cat]');
     chips.forEach((chip) => chip.addEventListener('click', () => {
       const filter = chip.dataset.filter;
       chips.forEach((c) => c.setAttribute('aria-pressed', String(c === chip)));
-      tiles.forEach((t) => { t.hidden = filter !== 'all' && t.dataset.cat !== filter; });
+      tiles.forEach((tile) => { tile.hidden = filter !== 'all' && tile.dataset.cat !== filter; });
     }));
   }
 
   /* ===== Копирование телефона ===== */
   function initCopy() {
-    document.querySelectorAll('[data-copy]').forEach((btn) => {
-      const label = btn.textContent;
+    $$('[data-copy]').forEach((btn) => {
       let timer = 0;
-      const show = (text) => {
-        btn.textContent = text;
+      const show = (key) => {
+        btn.textContent = t(key);
         clearTimeout(timer);
-        timer = setTimeout(() => { btn.textContent = label; }, 2000);
+        timer = setTimeout(() => { btn.textContent = t('copy'); }, 2000);
       };
       const selectText = () => {
         const el = btn.parentElement.querySelector('[data-copy-text]');
@@ -174,46 +535,44 @@
           sel.removeAllRanges();
           sel.addRange(range);
         }
-        show('Выделено');
+        show('selected');
       };
       btn.addEventListener('click', () => {
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(btn.dataset.copy).then(() => show('Скопировано'), selectText);
-        } else {
-          selectText();
-        }
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(btn.dataset.copy).then(() => show('copied'), selectText);
+        else selectText();
       });
     });
   }
 
-  /* ===== Карта: Яндекс Карта по координатам или схема-заглушка ===== */
+  /* ===== Карта: схема-заглушка, на сайте Google Maps по кнопке ===== */
   function initMap() {
-    const box = document.getElementById('map');
+    const box = $('#map');
     if (!box) return;
-    const { lat, lon, zoom } = SALON.map;
-    if (lat && lon && isTopLevel) {
+    drawMapSketch(box);
+    const consent = $('.map__consent', box);
+    if (!isTopLevel || !consent) return;
+    consent.hidden = false;
+    $('.map__load', consent).addEventListener('click', () => {
       const iframe = document.createElement('iframe');
-      iframe.src = `https://yandex.ru/map-widget/v1/?ll=${lon},${lat}&z=${zoom}&pt=${lon},${lat},pm2rdl`;
-      iframe.title = 'Карта: как добраться до салона';
+      iframe.src = `https://www.google.com/maps?q=${encodeURIComponent(SALON.map.query)}&hl=${lang}&z=16&output=embed`;
+      iframe.title = 'Google Maps: Queen Studio, Husova 557, Slaný';
       iframe.loading = 'lazy';
-      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = 'no-referrer-when-downgrade';
       box.classList.add('has-iframe');
       box.appendChild(iframe);
-      return;
-    }
-    drawMapSketch(box);
+    });
   }
 
   function drawMapSketch(box) {
-    const canvas = box.querySelector('canvas');
+    const canvas = $('canvas', box);
     if (!canvas) return;
     const c = canvas.getContext('2d');
     const col = {
-      bg: token('--ink-2', '#15120f'),
-      water: token('--ink', '#0d0b09'),
-      minor: token('--ink-3', '#1d1915'),
-      major: token('--line', '#2e2822'),
-      gold: hexToRgb(token('--gold', '#c9a46a')),
+      bg: token('--ink-2', '#13100c'),
+      water: token('--ink', '#0b0907'),
+      minor: token('--ink-3', '#1c1813'),
+      major: token('--line', '#2d271f'),
+      gold: hexToRgb(token('--gold', '#cfa862')),
     };
     const paint = () => {
       const w = box.clientWidth;
@@ -223,42 +582,36 @@
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       c.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const rnd = mulberry32(7);
+      const rnd = mulberry32(274);
       const d = Math.hypot(w, h);
       const line = (x1, y1, x2, y2) => { c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); };
-
       c.fillStyle = col.bg;
       c.fillRect(0, 0, w, h);
-
-      // Река под улицами: мосты получаются сами
       c.strokeStyle = col.water;
-      c.lineWidth = Math.max(28, w * 0.06);
+      c.lineWidth = Math.max(26, w * 0.05);
       c.beginPath();
-      c.moveTo(-40, h * 0.82);
-      c.bezierCurveTo(w * 0.3, h * 0.62, w * 0.6, h * 1.02, w + 40, h * 0.68);
+      c.moveTo(-40, h * 0.18);
+      c.bezierCurveTo(w * 0.35, h * 0.32, w * 0.55, h * 0.02, w + 40, h * 0.22);
       c.stroke();
-
-      // Сетка кварталов, повёрнутая вокруг салона в центре
       c.save();
       c.translate(w / 2, h / 2);
-      c.rotate(-0.2);
+      c.rotate(0.28);
       c.strokeStyle = col.minor;
       c.lineWidth = 3;
-      for (let x = -d / 2; x < d / 2; x += 34 + rnd() * 30) line(x, -d / 2, x, d / 2);
+      for (let x = -d / 2; x < d / 2; x += 32 + rnd() * 30) line(x, -d / 2, x, d / 2);
       for (let y = -d / 2; y < d / 2; y += 30 + rnd() * 34) line(-d / 2, y, d / 2, y);
       c.strokeStyle = col.major;
       c.lineWidth = 8;
       line(-d / 2, 0, d / 2, 0);
-      line(-150, -d / 2, -150, d / 2);
-      line(-d / 2, 160, d / 2, 160);
-      line(130, -d / 2, 130, d / 2);
-      // Маршрут до входа
-      c.strokeStyle = `rgba(${col.gold},0.8)`;
+      line(-140, -d / 2, -140, d / 2);
+      line(-d / 2, 150, d / 2, 150);
+      line(120, -d / 2, 120, d / 2);
+      c.strokeStyle = `rgba(${col.gold},0.85)`;
       c.lineWidth = 2;
       c.setLineDash([3, 7]);
       c.beginPath();
-      c.moveTo(-150, d / 2);
-      c.lineTo(-150, 0);
+      c.moveTo(-140, d / 2);
+      c.lineTo(-140, 0);
       c.lineTo(0, 0);
       c.stroke();
       c.restore();
@@ -267,238 +620,19 @@
     if ('ResizeObserver' in window) new ResizeObserver(paint).observe(box);
   }
 
-  /* ===== Фон первого экрана: золотые шёлковые пряди =====
-     Две «ленты» из тонких линий колышутся, слегка закручиваются и ловят бегущий блик,
-     как блеск ухоженных волос. Сверху медленно поднимается золотая пыль.
-     Курсор даёт лёгкий параллакс. При prefers-reduced-motion рисуется один статичный кадр. */
-  function initSilk() {
-    const hero = document.getElementById('hero');
-    const canvas = document.getElementById('silk');
-    if (!hero || !canvas || !canvas.getContext) return;
-    const ctx = canvas.getContext('2d');
-    const TAU = Math.PI * 2;
-    const colors = [
-      hexToRgb(token('--gold', '#c9a46a')),
-      hexToRgb(token('--gold-soft', '#e6d2a8')),
-      hexToRgb(token('--bronze', '#8c6a3f')),
-    ];
-
-    let W = 0;
-    let H = 0;
-    let wide = true;
-    let ribbons = [];
-    let dust = [];
-    let raf = 0;
-    let last = 0;
-    let time = 9; // старт с середины движения: первый же кадр выглядит законченным
-    let inView = true;
-    const ptr = { x: 0, y: 0, tx: 0, ty: 0 };
-
-    const bez = (a, b, c, d, t) => { const u = 1 - t; return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d; };
-    const bezD = (a, b, c, d, t) => { const u = 1 - t; return 3 * u * u * (b - a) + 6 * u * t * (c - b) + 3 * t * t * (d - c); };
-
-    function makeRibbon(cfg, rnd) {
-      const strands = [];
-      for (let i = 0; i < cfg.count; i++) {
-        const r = rnd();
-        strands.push({
-          u: (i + rnd() * 0.8) / cfg.count,           // место пряди поперёк ленты
-          c: colors[r < 0.55 ? 0 : r < 0.8 ? 1 : 2],
-          a: 0.45 + rnd() * 0.9,                       // яркость
-          w: 0.55 + rnd() * 0.9,                       // толщина
-          amp: cfg.amp * (0.12 + rnd() * 0.3),         // собственная волна пряди
-          f: 6 + rnd() * 7,
-          sp: 0.35 + rnd() * 0.5,
-          ph: rnd() * TAU,
-        });
-      }
-      const n = cfg.points + 1;
-      const buf = () => new Float32Array(n);
-      return { ...cfg, strands, bx: buf(), by: buf(), nx: buf(), ny: buf(), tw: buf(), wv: buf(), xs: buf(), ys: buf() };
-    }
-
-    function newMote(rnd, anywhere) {
-      const big = rnd() < 0.16;
-      return {
-        x: W * (wide ? 0.3 + rnd() * 0.7 : rnd()),
-        y: anywhere ? rnd() * H : H + 20,
-        z: 0.25 + rnd() * 0.75,
-        big,
-        r: big ? 6 + rnd() * 14 : 0.5 + rnd() * 1.3,
-        v: 5 + rnd() * 12,
-        ph: rnd() * TAU,
-        tw: 0.6 + rnd() * 1.6,
-        c: colors[rnd() < 0.6 ? 1 : 0],
-      };
-    }
-
-    function layout() {
-      const rect = hero.getBoundingClientRect();
-      W = rect.width;
-      H = rect.height;
-      if (!W || !H) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
-      canvas.width = Math.round(W * dpr);
-      canvas.height = Math.round(H * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      wide = W >= 900;
-      const s = Math.min(W, H);
-      const rnd = mulberry32(20261014);
-      // Контрольные точки кривых в долях ширины и высоты; концы уходят за край экрана
-      const configs = wide ? [
-        { p: [[0.80, -0.32], [1.20, 0.20], [0.38, 0.62], [0.74, 1.36]], width: s * 0.34, count: 92, points: 72, amp: H * 0.045, alpha: 0.12, lw: 0.9, seed: 0 },
-        { p: [[1.04, -0.28], [0.64, 0.30], [1.18, 0.70], [0.92, 1.32]], width: s * 0.2, count: 46, points: 60, amp: H * 0.035, alpha: 0.075, lw: 0.75, seed: 2.1 },
-      ] : [
-        { p: [[1.08, -0.22], [0.22, 0.30], [1.22, 0.62], [0.38, 1.26]], width: s * 0.62, count: 62, points: 52, amp: H * 0.03, alpha: 0.12, lw: 0.8, seed: 0 },
-        { p: [[0.55, -0.22], [1.12, 0.36], [0.28, 0.70], [0.96, 1.26]], width: s * 0.34, count: 28, points: 44, amp: H * 0.025, alpha: 0.08, lw: 0.7, seed: 2.1 },
-      ];
-      ribbons = configs.map((cfg) => makeRibbon(cfg, rnd));
-      dust = Array.from({ length: wide ? 70 : 32 }, () => newMote(rnd, true));
-      draw(0);
-    }
-
-    function drawRibbon(rb, t) {
-      const n = rb.points;
-      const ox = ptr.x * 26;
-      const oy = ptr.y * 16;
-      const P = rb.p.map(([x, y]) => [x * W + ox, y * H + oy]);
-      const sway = Math.sin(t * 0.21 + rb.seed) * H * 0.02;
-
-      for (let k = 0; k <= n; k++) {
-        const s = k / n;
-        const dx = bezD(P[0][0], P[1][0], P[2][0], P[3][0], s);
-        const dy = bezD(P[0][1], P[1][1], P[2][1], P[3][1], s);
-        const len = Math.hypot(dx, dy) || 1;
-        rb.nx[k] = -dy / len;
-        rb.ny[k] = dx / len;
-        rb.bx[k] = bez(P[0][0], P[1][0], P[2][0], P[3][0], s);
-        rb.by[k] = bez(P[0][1], P[1][1], P[2][1], P[3][1], s);
-        // Лента закручивается: её ширина «дышит» по длине и во времени
-        rb.tw[k] = rb.width * (0.16 + 0.84 * Math.abs(Math.cos(s * 3.1 + t * 0.17 + rb.seed)));
-        rb.wv[k] = rb.amp * Math.sin(s * 6.8 - t * 0.75 + rb.seed) + sway;
-      }
-
-      // Блик бежит вниз по прядям и уходит за край, потом начинается снова
-      const sheen = ((t * 0.065 + rb.seed * 0.3) % 1.7) - 0.35;
-      const band = 0.11;
-      const { xs, ys } = rb;
-
-      for (const st of rb.strands) {
-        for (let k = 0; k <= n; k++) {
-          const s = k / n;
-          const off = (st.u - 0.5) * rb.tw[k] + rb.wv[k] + st.amp * Math.sin(s * st.f + t * st.sp + st.ph);
-          xs[k] = rb.bx[k] + rb.nx[k] * off;
-          ys[k] = rb.by[k] + rb.ny[k] * off;
-        }
-        ctx.beginPath();
-        ctx.moveTo(xs[0], ys[0]);
-        for (let k = 1; k <= n; k++) ctx.lineTo(xs[k], ys[k]);
-        ctx.lineWidth = rb.lw * st.w;
-        ctx.strokeStyle = `rgba(${st.c},${(rb.alpha * st.a).toFixed(3)})`;
-        ctx.stroke();
-
-        const k0 = Math.max(0, Math.floor((sheen - band) * n));
-        const k1 = Math.min(n, Math.ceil((sheen + band) * n));
-        if (k1 - k0 < 2) continue;
-        const peak = Math.min(1, rb.alpha * st.a * 3.2).toFixed(3);
-        const g = ctx.createLinearGradient(xs[k0], ys[k0], xs[k1], ys[k1]);
-        g.addColorStop(0, `rgba(${colors[1]},0)`);
-        g.addColorStop(0.5, `rgba(${colors[1]},${peak})`);
-        g.addColorStop(1, `rgba(${colors[1]},0)`);
-        ctx.beginPath();
-        ctx.moveTo(xs[k0], ys[k0]);
-        for (let k = k0 + 1; k <= k1; k++) ctx.lineTo(xs[k], ys[k]);
-        ctx.strokeStyle = g;
-        ctx.lineWidth = rb.lw * st.w * 1.3;
-        ctx.stroke();
-      }
-    }
-
-    function drawDust(t, dt) {
-      for (const m of dust) {
-        if (dt) {
-          m.y -= m.v * m.z * dt;
-          m.x += Math.sin(t * 0.4 + m.ph) * 0.12 * m.z;
-          if (m.y < -24) Object.assign(m, newMote(Math.random, false));
-        }
-        const twinkle = 0.5 + 0.5 * Math.sin(t * m.tw + m.ph);
-        const x = m.x + ptr.x * 14 * m.z;
-        const y = m.y + ptr.y * 9 * m.z;
-        if (m.big) {
-          const g = ctx.createRadialGradient(x, y, 0, x, y, m.r);
-          g.addColorStop(0, `rgba(${m.c},${(0.08 * twinkle * m.z + 0.02).toFixed(3)})`);
-          g.addColorStop(1, `rgba(${m.c},0)`);
-          ctx.fillStyle = g;
-        } else {
-          ctx.fillStyle = `rgba(${m.c},${(0.2 + 0.6 * twinkle * m.z).toFixed(3)})`;
-        }
-        ctx.beginPath();
-        ctx.arc(x, y, m.r, 0, TAU);
-        ctx.fill();
-      }
-    }
-
-    function draw(dt) {
-      ctx.clearRect(0, 0, W, H);
-      ctx.globalCompositeOperation = 'lighter'; // пересечения прядей светлеют, как у шёлка
-      for (const rb of ribbons) drawRibbon(rb, time);
-      drawDust(time, dt);
-      ctx.globalCompositeOperation = 'source-over';
-    }
-
-    function frame(now) {
-      raf = requestAnimationFrame(frame);
-      const dt = Math.min((now - last) / 1000, 0.05);
-      last = now;
-      time += dt;
-      ptr.x += (ptr.tx - ptr.x) * 0.045;
-      ptr.y += (ptr.ty - ptr.y) * 0.045;
-      hero.style.setProperty('--px', ptr.x.toFixed(3));
-      hero.style.setProperty('--py', ptr.y.toFixed(3));
-      draw(dt);
-    }
-
-    // Анимация идёт только когда первый экран виден, вкладка активна и движение не отключено
-    function sync() {
-      const run = !reduceMotion.matches && inView && !document.hidden;
-      if (run && !raf) {
-        last = performance.now();
-        raf = requestAnimationFrame(frame);
-      } else if (!run && raf) {
-        cancelAnimationFrame(raf);
-        raf = 0;
-      }
-    }
-
-    layout();
-    let resizeTimer = 0;
-    if ('ResizeObserver' in window) {
-      new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(layout, 120); }).observe(hero);
-    }
-    if ('IntersectionObserver' in window) {
-      new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }).observe(hero);
-    }
-    document.addEventListener('visibilitychange', sync);
-    reduceMotion.addEventListener('change', () => { sync(); draw(0); });
-    hero.addEventListener('pointermove', (e) => {
-      if (e.pointerType !== 'mouse') return;
-      const r = hero.getBoundingClientRect();
-      ptr.tx = ((e.clientX - r.left) / r.width) * 2 - 1;
-      ptr.ty = ((e.clientY - r.top) / r.height) * 2 - 1;
-    });
-    hero.addEventListener('pointerleave', () => { ptr.tx = 0; ptr.ty = 0; });
-    sync();
-  }
-
   function init() {
+    applyLang(detectLang(), false);
     initHeader();
+    initLang();
     initBooking();
     initTabs();
     initGallery();
     initCopy();
     initMap();
-    initSilk();
-    document.querySelectorAll('[data-year]').forEach((el) => { el.textContent = String(new Date().getFullYear()); });
+    initBokeh();
+    initManiScrub();
+    initIntro(initHeroRing);
+    $$('[data-year]').forEach((el) => { el.textContent = String(new Date().getFullYear()); });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
