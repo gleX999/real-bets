@@ -28,8 +28,8 @@ window.QS_I18N = {
     'hero.f2': 'Hygiena a sterilizace',
     'hero.f3': 'Zkušený tým',
     'hero.follow': 'Sledujte nás',
-    'hero.pause': 'Pozastavit video',
-    'hero.play': 'Přehrát video',
+    'hero.pause': 'Pozastavit animaci',
+    'hero.play': 'Spustit animaci',
 
     'mani.eyebrow': 'Manikúra',
     'mani.title': 'Detail, kterého si všimne každý',
@@ -210,8 +210,8 @@ window.QS_I18N = {
     'hero.f2': 'Hygienic & safe',
     'hero.f3': 'Expert team',
     'hero.follow': 'Follow us',
-    'hero.pause': 'Pause video',
-    'hero.play': 'Play video',
+    'hero.pause': 'Pause animation',
+    'hero.play': 'Play animation',
 
     'mani.eyebrow': 'Manicure',
     'mani.title': 'The detail everyone notices',
@@ -392,8 +392,8 @@ window.QS_I18N = {
     'hero.f2': 'Гігієна та стерилізація',
     'hero.f3': 'Досвідчена команда',
     'hero.follow': 'Ми в соцмережах',
-    'hero.pause': 'Призупинити відео',
-    'hero.play': 'Відтворити відео',
+    'hero.pause': 'Призупинити анімацію',
+    'hero.play': 'Відтворити анімацію',
 
     'mani.eyebrow': 'Манікюр',
     'mani.title': 'Деталь, яку помічають усі',

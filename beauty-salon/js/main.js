@@ -323,26 +323,6 @@
     });
     hero.addEventListener('pointerleave', () => { ptr.tx = 0; ptr.ty = 0; if (!raf) raf = requestAnimationFrame(step); });
 
-    // Если в первый экран добавлено видео, кнопка в круглом значке ставит его на паузу
-    const video = $('.hero__video', hero);
-    const core = $('.hero__badge-core', hero);
-    if (video && core) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hero__play';
-      core.replaceChildren(btn);
-      hero.querySelector('.hero__badge').removeAttribute('aria-hidden');
-      const sync = () => {
-        btn.setAttribute('aria-label', t(video.paused ? 'hero.play' : 'hero.pause'));
-        btn.textContent = video.paused ? '▶' : '❚❚';
-      };
-      btn.addEventListener('click', () => { if (video.paused) video.play(); else video.pause(); });
-      video.addEventListener('play', sync);
-      video.addEventListener('pause', sync);
-      document.addEventListener('qs:lang', sync);
-      if (reduceMotion.matches) video.pause();
-      sync();
-    }
   }
 
   /* ===== Тёплые огни боке на фоне первого экрана ===== */
@@ -435,23 +415,137 @@
     sync();
   }
 
-  /* ===== Маникюр: когда появится видео (video[data-scrub]), кадр раскрывается вместе с прокруткой ===== */
-  function initManiScrub() {
-    const section = $('#manicure');
-    const video = section && $('video[data-scrub]', section);
-    if (!video || reduceMotion.matches) return;
-    section.classList.add('is-scrub');
-    video.pause();
-    let ticking = false;
-    const update = () => {
-      ticking = false;
-      if (!video.duration) return;
-      const r = section.getBoundingClientRect();
-      const p = clamp01(-r.top / (r.height - window.innerHeight));
-      video.currentTime = p * (video.duration - 0.05);
+  /* ===== Девушка на первом экране: внутри кольца логотипа ===== */
+  function initGirl() {
+    const canvas = $('#girl');
+    const hero = $('#hero');
+    if (!canvas || !hero || !window.QSArt) return { start() {} };
+    const ring = $('.hero__ring', hero);
+    const place = (W, H) => {
+      const box = canvas.getBoundingClientRect();
+      const r = ring && ring.getBoundingClientRect();
+      if (r && r.width && window.innerWidth > 900) {
+        const D = r.width;
+        return { x: r.left - box.left + D * 0.47, y: r.top - box.top + D * 0.15, k: D / 830 };
+      }
+      return { x: W * 0.62, y: H * 0.17, k: H / 1180 };
     };
-    window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
-    video.addEventListener('loadedmetadata', update);
+    const fig = window.QSArt.girl(canvas, place);
+    let raf = 0;
+    let last = 0;
+    let time = 1.7;              // кадр, где рука уже в волосах
+    let reveal = 0;
+    let started = false;
+    let paused = false;
+    let inView = true;
+
+    const frame = (now) => {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      time += dt;
+      reveal = Math.min(1, reveal + dt / 1.6);
+      fig.draw(time, easeOut(reveal));
+    };
+    const sync = () => {
+      const run = started && !paused && !reduceMotion.matches && inView && !document.hidden;
+      if (run && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); }
+      else if (!run && raf) { cancelAnimationFrame(raf); raf = 0; }
+    };
+    const relayout = () => { if (fig.layout()) fig.draw(time, started ? easeOut(reveal) : 0); };
+
+    // Кнопка паузы в круглом значке: анимация длится дольше 5 секунд
+    const badge = $('.hero__badge', hero);
+    const core = badge && $('.hero__badge-core', badge);
+    if (core) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hero__play';
+      btn.innerHTML = '<svg class="hero__badge-crown"><use href="#qs-crown"/></svg><svg class="hero__play-icon" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>';
+      core.replaceChildren(btn);
+      badge.removeAttribute('aria-hidden');
+      const label = () => {
+        btn.setAttribute('aria-label', t(paused ? 'hero.play' : 'hero.pause'));
+        btn.setAttribute('aria-pressed', String(paused));
+      };
+      btn.addEventListener('click', () => { paused = !paused; label(); sync(); });
+      document.addEventListener('qs:lang', label);
+      label();
+    }
+
+    relayout();
+    if ('ResizeObserver' in window) {
+      let timer = 0;
+      new ResizeObserver(() => { clearTimeout(timer); timer = setTimeout(relayout, 140); }).observe(hero);
+    }
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }).observe(hero);
+    }
+    document.addEventListener('visibilitychange', sync);
+    reduceMotion.addEventListener('change', () => { reveal = 1; fig.draw(time, 1); sync(); });
+    return {
+      start() {
+        started = true;
+        if (reduceMotion.matches) { reveal = 1; fig.draw(time, 1); }
+        sync();
+      },
+    };
+  }
+
+  /* ===== Маникюр: при прокрутке рука разжимает кулак и показывает ногти ===== */
+  function initHand() {
+    const section = $('#manicure');
+    const canvas = $('#hand');
+    if (!section || !canvas || !window.QSArt) return;
+    const art = window.QSArt.hand(canvas);
+    if (reduceMotion.matches) {
+      if (art.layout()) art.draw(0, 0, 0);
+      return;
+    }
+    section.classList.add('is-scrub');
+    let target = 1;
+    let cur = 1;
+    let gloss = 0;
+    let time = 0;
+    let raf = 0;
+    let last = 0;
+    let inView = false;
+
+    const update = () => {
+      const r = section.getBoundingClientRect();
+      const span = r.height - window.innerHeight;
+      const p = span > 0 ? clamp01(-r.top / span) : 0;
+      target = 1 - easeInOut(clamp01((p - 0.04) / 0.58));
+      gloss = clamp01((p - 0.64) / 0.3);
+    };
+    const frame = (now) => {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      time += dt;
+      cur += (target - cur) * Math.min(1, dt * 8);
+      art.draw(cur, gloss, time);
+    };
+    const sync = () => {
+      const run = inView && !document.hidden;
+      if (run && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); }
+      else if (!run && raf) { cancelAnimationFrame(raf); raf = 0; }
+    };
+    const relayout = () => { if (art.layout()) { update(); cur = target; art.draw(cur, gloss, time); } };
+
+    relayout();
+    window.addEventListener('scroll', update, { passive: true });
+    if ('ResizeObserver' in window) {
+      let timer = 0;
+      new ResizeObserver(() => { clearTimeout(timer); timer = setTimeout(relayout, 140); }).observe(canvas);
+    }
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }).observe(canvas);
+    } else {
+      inView = true;
+      sync();
+    }
+    document.addEventListener('visibilitychange', sync);
   }
 
   /* ===== Запись ===== */
@@ -630,8 +724,9 @@
     initCopy();
     initMap();
     initBokeh();
-    initManiScrub();
-    initIntro(initHeroRing);
+    initHand();
+    const girl = initGirl();
+    initIntro(() => { initHeroRing(); girl.start(); });
     $$('[data-year]').forEach((el) => { el.textContent = String(new Date().getFullYear()); });
   }
 

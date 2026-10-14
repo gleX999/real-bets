@@ -271,7 +271,7 @@ html.is-intro .site-header .logo { opacity: 0; animation: logo-failsafe .3s 8.4s
   position: absolute; right: 7%; top: 52%; width: min(46vw, 620px); aspect-ratio: 1; height: auto;
   transform: translate3d(calc(var(--px, 0) * -10px), calc(-50% + var(--py, 0) * -6px), 0);
 }
-.hero__note { position: absolute; left: 24%; right: 9%; top: calc(var(--header-h, 80px) + 1.25rem); }
+.hero__girl { position: absolute; inset: 0; width: 100%; height: 100%; }
 .hero__veil {
   position: absolute; inset: 0; z-index: -2; pointer-events: none;
   background:
@@ -335,6 +335,14 @@ html.is-intro .hero__content > * { animation-play-state: paused; }
   border: 1px solid rgb(var(--gold-rgb) / .55); background: rgb(var(--ink-rgb) / .55);
 }
 .hero__badge-crown { width: 48%; height: auto; aspect-ratio: 140 / 84; }
+.hero__play {
+  position: relative; display: grid; place-items: center; width: 100%; height: 100%;
+  border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+}
+.hero__play .hero__badge-crown { transition: opacity .25s; }
+.hero__play-icon { position: absolute; width: 34%; height: auto; fill: var(--gold-soft); opacity: 0; transition: opacity .25s; }
+.hero__play[aria-pressed="true"] .hero__badge-crown { opacity: 0; }
+.hero__play[aria-pressed="true"] .hero__play-icon { opacity: 1; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 900px) {
@@ -342,7 +350,6 @@ html.is-intro .hero__content > * { animation-play-state: paused; }
   .hero__ring { right: -38%; width: 110vw; top: 46%; opacity: .55; }
   .hero__veil { background: linear-gradient(180deg, rgb(var(--ink-rgb) / .55) 0%, rgb(var(--ink-rgb) / .72) 55%, var(--ink) 100%); }
   .hero__rail { display: none; }
-  .hero__note { left: var(--gutter); right: var(--gutter); top: calc(var(--header-h, 80px) + 10px); }
 }
 @media (max-width: 760px) {
   .hero__badge { display: none; }
@@ -360,7 +367,7 @@ html.is-intro .hero__content > * { animation-play-state: paused; }
     radial-gradient(45% 55% at 58% 46%, rgb(201 149 138 / .22), transparent 70%),
     radial-gradient(80% 80% at 50% 50%, #1b140f, var(--ink));
 }
-.mani__media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mani__hand { position: absolute; inset: 0; width: 100%; height: 100%; }
 .mani__glow {
   position: absolute; left: 50%; top: 44%; width: 46%; aspect-ratio: 1; transform: translate(-50%, -50%);
   border-radius: 50%; border: 1px solid rgb(var(--gold-rgb) / .35);
@@ -370,8 +377,15 @@ html.is-intro .hero__content > * { animation-play-state: paused; }
 .mani__text h2 { font-size: clamp(2.3rem, 1.4rem + 2.8vw, 3.6rem); }
 .mani__text > p:not(.eyebrow) { color: var(--muted); max-width: 30rem; }
 /* Режим с видео: секция «прилипает», а кадр прокручивается вместе со страницей */
-.mani.is-scrub { padding-block: 0; height: 240vh; }
-.mani.is-scrub .mani__inner { position: sticky; top: 0; min-height: 100vh; padding-block: calc(var(--header-h, 80px) + 2rem) 2rem; }
+.mani.is-scrub { padding-block: 0; height: 230vh; }
+.mani.is-scrub .mani__inner { position: sticky; top: 0; min-height: 100vh; align-content: center; padding-block: calc(var(--header-h, 80px) + 1.5rem) 1.5rem; }
+@media (max-width: 900px) {
+  .mani.is-scrub { height: 190vh; }
+  .mani.is-scrub .mani__inner { gap: 1.25rem; padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+  .mani.is-scrub .mani__media { aspect-ratio: 4 / 3; }
+  .mani.is-scrub .mani__text { gap: .8rem; }
+  .mani.is-scrub .mani__text h2 { font-size: 2rem; }
+}
 @media (max-width: 900px) { .mani__inner { grid-template-columns: 1fr; } }
 
 /* ---------- О салоне ---------- */
